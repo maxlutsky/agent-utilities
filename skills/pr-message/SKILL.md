@@ -5,25 +5,37 @@ description: Draft pull request messages using the team PR template, including t
 
 # PR Message
 
+## Determine branch context
+
+- Run these commands to gather branch context and recent activity:
+
+```bash
+git branch --show-current
+git symbolic-ref refs/remotes/origin/HEAD
+git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/remotes/origin
+```
+
+- Ask for the target branch for this PR and suggest likely options based on git output.
+  - Prefer the default branch from `origin/HEAD`.
+  - Offer the 3-5 most recently updated remote branches (exclude `origin/HEAD`).
+- Use the current branch name to prefill:
+  - Related ticket (pattern like `PROJECT-123`).
+  - Title hint (convert branch slug to words if no explicit description is given).
+
 ## Use the template asset
 
 - Load `assets/pr-message-template.md` and copy it as the starting point for the PR message.
 - Preserve headings, separators, and checklist formatting.
 
-## Collect inputs
+## Auto-fill from git
 
-- Ask for any missing details before drafting. Minimum inputs:
-  - PR type (e.g., Feature, Fix, Chore, Refactor, Docs)
-  - Brief description for the title
-  - Related issue/ticket link or explicit "None"
-  - What was done
-  - Why it was done
-  - How to test (steps + expected behavior)
-- Optional inputs:
-  - Technical details
-  - Screenshots/video links
-  - Optional notes
-  - Estimated review time (default to 5-10 minutes when not provided)
+- Infer as much as possible from the repo before asking the user:
+  - PR type from the changes (feature/fix/chore/refactor/docs/tests).
+  - Brief title from the branch name plus git diff summary.
+  - What was done and why from `git diff --stat` and `git log -1 --oneline`.
+  - How to test from changes (scripts, tests, README) or `git diff` if present.
+  - Technical details from code hotspots and file names.
+- Ask only for missing or ambiguous details after auto-filling.
 
 ## Fill the template
 

@@ -32,9 +32,9 @@ Ask for the target branch if it is missing.
 
 ## Content Rules
 
-- `What was done`: keep high-level and short. Do not include low-level technical details.
+- `What was done`: derive from commit intent and behavioral outcomes. Keep it high-level and short. Do not list files here.
 - `Why it was done`: include this section only for bug fixes or refactors. For features or flow changes, omit the `Why it was done` block entirely.
-- `Technical details`: include key implementation notes with specific file names and entity/function names. Do not paste code.
+- `Technical details`: include key implementation notes with specific file names and entity/function names (for example, class, struct, method, function). Do not paste code.
 
 ## Output
 

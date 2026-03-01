@@ -27,6 +27,25 @@ trim() {
   sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
+clean_subject() {
+  local raw="$1"
+  printf '%s' "${raw}" \
+    | sed -E 's/^\[[^]]+\]:[[:space:]]*//; s/^[A-Z]+-[0-9]+[[:space:]:-]*//; s/^[a-zA-Z]+(\([^)]+\))?:[[:space:]]*//' \
+    | trim
+}
+
+to_sentence() {
+  local text="$1"
+  text="$(printf '%s' "${text}" | trim)"
+  [[ -z "${text}" ]] && return 0
+  text="$(printf '%s' "${text}" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
+  if [[ "${text}" =~ [.!?]$ ]]; then
+    printf '%s' "${text}"
+  else
+    printf '%s.' "${text}"
+  fi
+}
+
 BASE_BRANCH=""
 OUTPUT_FILE="PR_DESCRIPTION.md"
 PR_TYPE="Feature"
@@ -90,13 +109,15 @@ MERGE_BASE="$(git merge-base "${BASE_REF}" HEAD)"
 RANGE="${MERGE_BASE}..HEAD"
 
 COMMITS_RAW="$(git log --reverse --pretty=format:'%s|%h' "${RANGE}")"
+COMMIT_SUBJECTS="$(git log --reverse --pretty=format:'%s' "${RANGE}")"
 COMMIT_COUNT="$(git rev-list --count "${RANGE}")"
 CHANGED_FILE_COUNT="$(git diff --name-only "${RANGE}" | sed '/^$/d' | wc -l | tr -d ' ')"
 
 if [[ -n "${TITLE_OVERRIDE}" ]]; then
   BRIEF_TITLE="${TITLE_OVERRIDE}"
 else
-  FIRST_SUBJECT="$(printf '%s\n' "${COMMITS_RAW}" | head -n 1 | cut -d'|' -f1 | trim)"
+  FIRST_SUBJECT_RAW="$(printf '%s\n' "${COMMITS_RAW}" | head -n 1 | cut -d'|' -f1)"
+  FIRST_SUBJECT="$(clean_subject "${FIRST_SUBJECT_RAW}")"
   if [[ -n "${FIRST_SUBJECT}" ]]; then
     BRIEF_TITLE="${FIRST_SUBJECT}"
   else
@@ -106,11 +127,18 @@ fi
 
 LOWER_TYPE="$(printf '%s' "${PR_TYPE}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${LOWER_TYPE}" == "fix" || "${LOWER_TYPE}" == "bugfix" || "${LOWER_TYPE}" == "refactor" ]]; then
+  WHY_REASON="$(printf '%s\n' "${COMMIT_SUBJECTS}" | awk 'BEGIN{IGNORECASE=1} /(fix|bug|regress|crash|stability|issue|warning|refactor)/ {print; exit}')"
+  WHY_REASON="$(clean_subject "${WHY_REASON}")"
+  WHY_REASON="$(to_sentence "${WHY_REASON}")"
+  if [[ -z "${WHY_REASON}" ]]; then
+    WHY_REASON="Address stability/quality issues discovered in the previous implementation."
+  fi
   WHY_BLOCK="$(cat <<'EOF'
 * **Why it was done:**
-    * Address issues found in the previous implementation and reduce risk in the impacted area.
+    * __WHY_REASON__
 EOF
 )"
+  WHY_BLOCK="${WHY_BLOCK/__WHY_REASON__/${WHY_REASON}}"
 else
   WHY_BLOCK=""
 fi
@@ -120,31 +148,60 @@ if [[ -z "${DIRS}" ]]; then
   DIRS="core modules"
 fi
 
-WHAT_DONE_LINE_1="Implemented ${COMMIT_COUNT} commit(s) from \`${CURRENT_BRANCH}\` compared to \`${BASE_REF}\`."
-WHAT_DONE_LINE_2="Delivered high-level updates across ${DIRS} with a scoped change set of ${CHANGED_FILE_COUNT} file(s)."
+WHAT_DONE_BULLETS="$(
+  printf '%s\n' "${COMMIT_SUBJECTS}" \
+    | sed '/^$/d' \
+    | while IFS= read -r subject; do
+        cleaned="$(clean_subject "${subject}")"
+        sentence="$(to_sentence "${cleaned}")"
+        if [[ -n "${sentence}" ]]; then
+          printf '    * %s\n' "${sentence}"
+        fi
+      done \
+    | awk '!seen[$0]++' \
+    | head -n 4
+)"
 
-TECH_FILES="$(git diff --name-only "${RANGE}" | sed '/^$/d' | head -n 12)"
-if [[ -z "${TECH_FILES}" ]]; then
-  TECH_FILES="- No file changes detected in range."
-else
-  TECH_FILES="$(printf '%s\n' "${TECH_FILES}" | sed 's|^|- `|; s|$|`|')"
+if [[ -z "${WHAT_DONE_BULLETS}" ]]; then
+  WHAT_DONE_BULLETS="$(cat <<EOF
+    * Implemented ${COMMIT_COUNT} commit(s) from \`${CURRENT_BRANCH}\` compared to \`${BASE_REF}\`.
+    * Delivered high-level updates across ${DIRS} with a scoped change set of ${CHANGED_FILE_COUNT} file(s).
+EOF
+)"
 fi
 
-TECH_ENTITIES="$(git diff -U0 "${RANGE}" | awk '
-  /^@@/ {
-    split($0, parts, "@@");
-    if (length(parts) >= 3) {
-      s=parts[3];
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s);
-      if (s != "") print s;
-    }
-  }
-' | sed '/^$/d' | sort -u | head -n 10)"
+TECH_DETAILS_BULLETS="$(
+  git diff --name-only "${RANGE}" \
+    | sed '/^$/d' \
+    | head -n 10 \
+    | while IFS= read -r file; do
+        entities="$(
+          git diff -U0 "${RANGE}" -- "${file}" \
+            | awk '
+              /^@@/ {
+                split($0, parts, "@@");
+                if (length(parts) >= 3) {
+                  s=parts[3];
+                  gsub(/^[[:space:]]+|[[:space:]]+$/, "", s);
+                  if (s != "") print s;
+                }
+              }
+            ' \
+            | sed '/^$/d' \
+            | sort -u \
+            | head -n 3 \
+            | paste -sd ', ' -
+        )"
+        if [[ -n "${entities}" ]]; then
+          printf '* `%s`: `%s`\n' "${file}" "${entities}"
+        else
+          printf '* `%s`: key implementation updates in this file.\n' "${file}"
+        fi
+      done
+)"
 
-if [[ -z "${TECH_ENTITIES}" ]]; then
-  TECH_ENTITIES="- No function/entity names detected from diff hunks."
-else
-  TECH_ENTITIES="$(printf '%s\n' "${TECH_ENTITIES}" | sed 's|^|- `|; s|$|`|')"
+if [[ -z "${TECH_DETAILS_BULLETS}" ]]; then
+  TECH_DETAILS_BULLETS="* No file-level implementation details detected in the selected range."
 fi
 
 if [[ -z "${COMMITS_RAW}" ]]; then
@@ -165,18 +222,14 @@ cat > "${OUTPUT_FILE}" <<EOF
 ### Description of Changes
 
 * **What was done:**
-    * ${WHAT_DONE_LINE_1}
-    * ${WHAT_DONE_LINE_2}
+${WHAT_DONE_BULLETS}
 ${WHY_BLOCK}
 
 ---
 
 ### Technical Details
 
-* **Key files changed:**
-${TECH_FILES}
-* **Impacted entities/functions (from diff context):**
-${TECH_ENTITIES}
+${TECH_DETAILS_BULLETS}
 
 ---
 

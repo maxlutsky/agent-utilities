@@ -10,8 +10,6 @@ Create a PR description Markdown file from git history and diff between `HEAD` a
 ## Required Input
 
 - Target branch/ref (for example: `main`, `develop`, `release/5.6.0`, `origin/release/5.6.0`).
-- Optional ticket (if missing, write `N/A`).
-- Optional PR type override (`Feature`, `Fix`, `Refactor`, `Chore`).
 
 Ask for missing target branch/ref when it cannot be resolved locally.
 
@@ -28,15 +26,7 @@ Ask for missing target branch/ref when it cannot be resolved locally.
 - Run `git diff --stat <range>`.
 - Run `git diff -U1 <range>` and inspect added/changed behavior.
 
-3. Derive PR content from meaning, not file inventory.
-- `What was done`: short, high-level behavior changes based on commits and diff intent.
-- `Why it was done`: include only for bugfix/refactor when reason is non-obvious.
-- `Technical Details`: minimal key implementation points.
-- Mention key entities (service/manager/protocol/method/flow).
-- Mention file names only when a file is a key implementation artifact.
-- Do not output a per-file list as the main technical section.
-
-4. Write output file.
+3. Write output file.
 - Create `PR_DESCRIPTION.md` in repo root unless user requested another path.
 - Fill the template exactly.
 
@@ -56,15 +46,15 @@ Use this exact structure:
 ### Description of Changes
 
 * **What was done:**
-    * *Clearly and concisely describe the main changes.*
+    * *Short, high-level behavior changes based on commits and diff intent, no technical details or file references.*
 * **Why it was done:**
-    * *Explain the problem this PR solves or the new functionality it adds.*
+    * *Explain the problem this PR solves. Include only for bugfix/refactor when reason is non-obvious.*
 
 ---
 
 ### Technical Details
 
-* [Any technical details]
+* [Minimal key implementation points with technical details, like file/entities/methods references.]
 
 ---
 

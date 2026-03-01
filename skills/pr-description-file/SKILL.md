@@ -34,7 +34,7 @@ Ask for the target branch if it is missing.
 
 - `What was done`: derive from commit intent and behavioral outcomes. Keep it high-level and short. Do not list files here.
 - `Why it was done`: include this section only for bug fixes or refactors. For features or flow changes, omit the `Why it was done` block entirely.
-- `Technical details`: include key implementation notes with specific file names and entity/function names (for example, class, struct, method, function). Do not paste code.
+- `Technical details`: synthesize minimal key implementation points (what was introduced/changed and how it is integrated). Prefer entities (service, manager, protocol, methods) over file inventory. Mention file names only when a file is itself a key artifact of the implementation. Do not paste code.
 
 ## Output
 

@@ -46,6 +46,20 @@ to_sentence() {
   fi
 }
 
+sentence_case() {
+  local text="$1"
+  text="$(printf '%s' "${text}" | trim)"
+  [[ -z "${text}" ]] && return 0
+  printf '%s' "${text}" | awk '{print toupper(substr($0,1,1)) substr($0,2)}'
+}
+
+camel_to_words() {
+  local input="$1"
+  printf '%s' "${input}" \
+    | sed -E 's/([a-z0-9])([A-Z])/\1 \2/g; s/([A-Z])([A-Z][a-z])/\1 \2/g' \
+    | tr '[:upper:]' '[:lower:]'
+}
+
 BASE_BRANCH=""
 OUTPUT_FILE="PR_DESCRIPTION.md"
 PR_TYPE="Feature"
@@ -117,7 +131,7 @@ if [[ -n "${TITLE_OVERRIDE}" ]]; then
   BRIEF_TITLE="${TITLE_OVERRIDE}"
 else
   FIRST_SUBJECT_RAW="$(printf '%s\n' "${COMMITS_RAW}" | head -n 1 | cut -d'|' -f1)"
-  FIRST_SUBJECT="$(clean_subject "${FIRST_SUBJECT_RAW}")"
+  FIRST_SUBJECT="$(sentence_case "$(clean_subject "${FIRST_SUBJECT_RAW}")")"
   if [[ -n "${FIRST_SUBJECT}" ]]; then
     BRIEF_TITLE="${FIRST_SUBJECT}"
   else
@@ -170,39 +184,87 @@ EOF
 )"
 fi
 
-TECH_DETAILS_BULLETS="$(
-  git diff --name-only "${RANGE}" \
-    | sed '/^$/d' \
-    | head -n 10 \
-    | while IFS= read -r file; do
-        entities="$(
-          git diff -U0 "${RANGE}" -- "${file}" \
-            | awk '
-              /^@@/ {
-                split($0, parts, "@@");
-                if (length(parts) >= 3) {
-                  s=parts[3];
-                  gsub(/^[[:space:]]+|[[:space:]]+$/, "", s);
-                  if (s != "") print s;
-                }
-              }
-            ' \
-            | sed '/^$/d' \
-            | sort -u \
-            | head -n 3 \
-            | paste -sd ', ' -
-        )"
-        if [[ -n "${entities}" ]]; then
-          printf '* `%s`: `%s`\n' "${file}" "${entities}"
-        else
-          printf '* `%s`: key implementation updates in this file.\n' "${file}"
-        fi
-      done
+DIFF_PATCH="$(git diff -U1 "${RANGE}")"
+
+NEW_TYPES="$(
+  printf '%s\n' "${DIFF_PATCH}" \
+    | awk '
+      /^\+[[:space:]]*(class|struct|actor|protocol|enum)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/ {
+        gsub(/^\+/, "", $0);
+        kind=$1;
+        name=$2;
+        gsub(/[^A-Za-z0-9_].*$/, "", name);
+        if (name != "") print kind "|" name;
+      }
+    ' \
+    | awk '!seen[$0]++' \
+    | head -n 4
 )"
 
-if [[ -z "${TECH_DETAILS_BULLETS}" ]]; then
-  TECH_DETAILS_BULLETS="* No file-level implementation details detected in the selected range."
+ADDED_FUNCS="$(
+  printf '%s\n' "${DIFF_PATCH}" \
+    | awk '
+      /^\+[[:space:]]*(public|private|internal|fileprivate|open|static|final|override|mutating|nonmutating|async|throws|rethrows|@MainActor|@discardableResult|@Sendable|@escaping|@objc|@available|convenience|required|lazy|indirect)?[[:space:]]*func[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/ {
+        line=$0;
+        sub(/^\+/, "", line);
+        sub(/^.*func[[:space:]]+/, "", line);
+        sub(/\(.*/, "", line);
+        gsub(/[^A-Za-z0-9_].*$/, "", line);
+        if (line != "") print line;
+      }
+    ' \
+    | awk '!seen[$0]++' \
+    | head -n 6
+)"
+
+TECH_DETAILS_BULLETS=""
+
+if [[ -n "${NEW_TYPES}" ]]; then
+  while IFS='|' read -r kind name; do
+    [[ -z "${name}" ]] && continue
+    topic="$(camel_to_words "${name}" | sed -E 's/[[:space:]]+(service|manager|provider|client|repository|coordinator|use case|usecase)$//')"
+    if [[ "${name}" =~ (Service|Manager|Provider|Client|Repository|Coordinator)$ ]]; then
+      TECH_DETAILS_BULLETS="${TECH_DETAILS_BULLETS}"$'\n'"* Created \`${name}\` (${kind}) to centralize ${topic} logic."
+      usage_count="$(
+        git diff --name-only "${RANGE}" \
+          | sed '/^$/d' \
+          | while IFS= read -r f; do
+              git diff -U0 "${RANGE}" -- "${f}" | grep -Eq "^\+.*\b${name}\b" && printf '%s\n' "${f}"
+            done \
+          | wc -l | tr -d ' '
+      )"
+      if [[ "${usage_count}" -gt 1 ]]; then
+        TECH_DETAILS_BULLETS="${TECH_DETAILS_BULLETS}"$'\n'"* Integrated \`${name}\` across multiple updated flows/components."
+      fi
+    else
+      TECH_DETAILS_BULLETS="${TECH_DETAILS_BULLETS}"$'\n'"* Added \`${name}\` (${kind}) to support the updated flow."
+    fi
+  done <<< "${NEW_TYPES}"
 fi
+
+if [[ -n "${ADDED_FUNCS}" ]]; then
+  FUNCS_INLINE="$(printf '%s\n' "${ADDED_FUNCS}" | sed 's/^/`/; s/$/()`/' | paste -sd ', ' -)"
+  TECH_DETAILS_BULLETS="${TECH_DETAILS_BULLETS}"$'\n'"* Implemented/updated key methods: ${FUNCS_INLINE}."
+fi
+
+if [[ -z "${TECH_DETAILS_BULLETS}" ]]; then
+  COMMIT_TECH_LINES="$(
+    printf '%s\n' "${COMMIT_SUBJECTS}" \
+      | sed '/^$/d' \
+      | head -n 4 \
+      | while IFS= read -r subject; do
+          line="$(to_sentence "$(clean_subject "${subject}")")"
+          [[ -n "${line}" ]] && printf '* %s\n' "${line}"
+        done
+  )"
+  TECH_DETAILS_BULLETS="${COMMIT_TECH_LINES}"
+fi
+
+if [[ -z "${TECH_DETAILS_BULLETS}" ]]; then
+  TECH_DETAILS_BULLETS="* No key implementation details detected in the selected range."
+fi
+
+TECH_DETAILS_BULLETS="$(printf '%s\n' "${TECH_DETAILS_BULLETS}" | sed '/^$/d' | awk '!seen[$0]++' | head -n 6)"
 
 if [[ -z "${COMMITS_RAW}" ]]; then
   COMMIT_NOTES="- No commits found between ${BASE_REF} and HEAD."

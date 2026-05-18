@@ -7,6 +7,7 @@ Small collection of skills and helpers for any coding agent.
 ## Symlinked skills (Dimillian)
 The following skills are symlinked from the Dimillian submodule:
 - `swift-concurrency-expert`
+- `review-swarm`
 - `swiftui-liquid-glass`
 - `swiftui-performance-audit`
 - `swiftui-ui-patterns`
